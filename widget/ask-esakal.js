@@ -19,7 +19,7 @@
   var IS_MOCK = API_BASE === "mock";
 
   /* ---- i18n ----------------------------------------------------------- */
-  var lang = localStorage.getItem("ae-lang") || "mr";
+  var lang = "mr";
 
   var I18N = {
     mr: {
@@ -223,10 +223,10 @@
 
   /* ---- fallback suggestions ------------------------------------------- */
   var FALLBACK_SUGGESTIONS = [
-    "What happened in Maharashtra today?",
-    "What is the latest on Pune?",
-    "What did the state government announce this week?",
-    "Explain the latest political developments in Maharashtra."
+    "आज महाराष्ट्रात काय घडले?",
+    "पुण्यातील ताज्या बातम्या काय आहेत?",
+    "राज्य सरकारने या आठवड्यात काय जाहीर केले?",
+    "महाराष्ट्रातील राजकीय घडामोडी काय आहेत?"
   ];
 
   /* ---- mock data -------------------------------------------------------- */
@@ -333,31 +333,6 @@
     loadSuggestions(chips, submitQ);
     renderFooter();
 
-    /* lang toggle */
-    var langBtn = root.querySelector("#ae-lang-btn");
-    if (langBtn) {
-      langBtn.addEventListener("click", function () {
-        lang = (lang === "mr") ? "en" : "mr";
-        localStorage.setItem("ae-lang", lang);
-        /* update static text nodes */
-        langBtn.textContent = t("toggleLabel");
-        var sub = root.querySelector("#ae-subtitle");
-        if (sub) sub.textContent = t("subtitle");
-        var tryLabel = root.querySelector("#ae-try-label");
-        if (tryLabel) tryLabel.textContent = t("tryAsking");
-        var attrib = root.querySelector("#ae-attrib");
-        if (attrib) attrib.innerHTML = t("attrib");
-        /* update empty state if still visible */
-        var emptyH = root.querySelector("#ae-empty-h");
-        if (emptyH) emptyH.textContent = t("emptyH");
-        var emptyP = root.querySelector("#ae-empty-p");
-        if (emptyP) emptyP.textContent = t("emptyP");
-        /* reload suggestions in new language */
-        loadSuggestions(chips, submitQ);
-        /* re-render footer to update placeholder and button */
-        renderFooter();
-      });
-    }
 
     function syncCounter() {
       var pill = root.querySelector("#ae-counter");
@@ -483,7 +458,6 @@
       '<div><h3 class="ask-esakal-title">Ask <span class="ask-esakal-thin">Esakal</span></h3>' +
       '<p class="ask-esakal-sub" id="ae-subtitle">' + t("subtitle") + '</p></div>' +
       '</div>' +
-      '<button class="ask-esakal-lang-toggle" id="ae-lang-btn" type="button">' + t("toggleLabel") + '</button>' +
       '</div></div>';
   }
 
