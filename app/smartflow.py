@@ -180,6 +180,15 @@ def is_ready() -> bool:
     return _index_ready.is_set()
 
 
+def recent(limit: int = 5) -> list[dict]:
+    if not _index_ready.is_set():
+        _index_ready.wait(timeout=1.0)
+        if not _index_ready.is_set():
+            return []
+    with _index_lock:
+        return _index[:limit]
+
+
 def search(query: str, limit: int = 5) -> list[dict]:
     if not _index_ready.is_set():
         _index_ready.wait(timeout=1.0)

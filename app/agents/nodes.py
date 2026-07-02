@@ -32,9 +32,10 @@ BARE_WORDS = {"news", "politics", "राजकारण", "बातम्य�
 STOPWORDS = {
     "the", "a", "an", "is", "are", "was", "were", "what", "happened", "in", "on", "of",
     "about", "today", "recent", "latest", "news", "tell", "me", "please", "current",
-    "situation", "regarding", "and",
+    "situation", "regarding", "and", "top", "stories", "story", "headlines",
     "आज", "काय", "घडले", "घडल्या", "बद्दल", "सांगा", "आहे", "मध्ये", "ची", "चा", "ला",
     "बातम्या", "विषयी", "सध्याची", "सद्यस्थिती", "चे", "सांगणे", "मधील",
+    "आजच्या", "ताज्या", "ताजी", "ताजा", "ताजे", "स्टोरीज", "हेडलाईन्स",
 }
 
 MULTI_WORD_TRANSLITERATE = {
@@ -85,17 +86,19 @@ def _build_search_query(question: str) -> str:
         if mapped not in kept:
             kept.append(mapped)
     if not kept:
-        # Nothing substantive left (e.g. a pure date phrase like "एप्रिलमधील बातम्या") —
-        # fall back to the date-stripped remainder rather than reintroducing the
-        # month/date words we just removed.
-        remainder = lower.strip()
-        return remainder if remainder else question.strip()
+        # Nothing substantive left after stripping dates/months/stopwords (e.g.
+        # "एप्रिलमधील बातम्या" or "आजच्या ताज्या बातम्या") — signal the caller to
+        # use the generic top-stories fallback instead of a doomed keyword search.
+        return ""
     return " ".join(kept[:4])
 
 
 _DATE_PHRASES_MR = [
     "गेल्या आठवड्यातील", "या आठवड्यातील", "गेल्या महिन्यातील", "या महिन्यातील",
     "गेल्या आठवड्यात", "या आठवड्यात", "गेल्या महिन्यात", "या महिन्यात",
+    # Longer inflected forms must precede the bare "आज"/"काल" so they get
+    # removed whole instead of leaving a fragment like "आजच्या" -> "च्या".
+    "आजच्या", "आजची", "आजचे", "आजचा", "काल्च्या", "काल्ची",
     "आज", "काल",
 ]
 _DATE_PHRASES_EN = ["last week", "this week", "last month", "this month", "today", "yesterday"]
@@ -174,17 +177,20 @@ def _rule_based_analysis(question: str) -> QueryAnalysis:
 
     search_query = _build_search_query(question)
     kept_tokens = search_query.split() if search_query else []
+    from_date, to_date = _extract_date_range(lower)
 
     if lower in BARE_WORDS or not kept_tokens:
+        # No substantive topic word (e.g. "आजच्या ताज्या बातम्या", bare "news") —
+        # rather than asking the user to clarify, fetch top/recent stories directly.
+        # search_query="" is a sentinel the retrieve step checks for.
         return QueryAnalysis(
-            intent="clarify",
-            search_query=None,
+            intent="briefing",
+            search_query="",
             entities=[],
             k=8,
-            clarification_needed=True,
+            from_date=from_date,
+            to_date=to_date,
         )
-
-    from_date, to_date = _extract_date_range(lower)
 
     return QueryAnalysis(
         intent="briefing",
@@ -295,14 +301,24 @@ def _ms_from_date_str(date_str: str | None) -> int | None:
 
 async def retrieve(state: GraphState) -> GraphState:
     analysis = state["analysis"]
+    generic = state.get("current_query") is None and analysis.search_query == ""
     query = state.get("current_query") or analysis.search_query or state["question"]
-    quintype_articles, print_articles = await asyncio.gather(
-        quintype.search(query, limit=analysis.k),
-        asyncio.to_thread(smartflow.search, query, limit=max(3, analysis.k // 3)),
-    )
-    # Apply date-range filter if the planner extracted explicit dates from the query
-    from_ms = _ms_from_date_str(analysis.from_date)
-    to_ms = _ms_from_date_str(analysis.to_date)
+    if generic:
+        quintype_articles, print_articles = await asyncio.gather(
+            quintype.top_stories(limit=analysis.k),
+            asyncio.to_thread(smartflow.recent, limit=max(3, analysis.k // 3)),
+        )
+    else:
+        quintype_articles, print_articles = await asyncio.gather(
+            quintype.search(query, limit=analysis.k),
+            asyncio.to_thread(smartflow.search, query, limit=max(3, analysis.k // 3)),
+        )
+    # Apply date-range filter if the planner extracted explicit dates from the query.
+    # Skip for generic "top stories" queries — there's no specific topic to widen the
+    # search on if the strict date filter empties the result, so best-effort recency
+    # (already provided by top_stories/recent) is used instead of a hard cutoff.
+    from_ms = None if generic else _ms_from_date_str(analysis.from_date)
+    to_ms = None if generic else _ms_from_date_str(analysis.to_date)
     if to_ms:
         # Include full to_date day (add 24h)
         to_ms += 86_400_000
@@ -339,7 +355,7 @@ async def retrieve(state: GraphState) -> GraphState:
             headline=article.get("headline", "Untitled"),
             published_at=format_date(article.get("published-at")),
             url=_article_url(article),
-            chunk_text=truncate_to_tokens(text, 800),
+            chunk_text=truncate_to_tokens(text, 400),
         ))
     state["chunks"] = chunks
     state["steps"] = state.get("steps", []) + [

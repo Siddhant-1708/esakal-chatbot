@@ -223,10 +223,10 @@
 
   /* ---- fallback suggestions ------------------------------------------- */
   var FALLBACK_SUGGESTIONS = [
-    "आज महाराष्ट्रात काय घडले?",
-    "पुण्यातील ताज्या बातम्या काय आहेत?",
-    "राज्य सरकारने या आठवड्यात काय जाहीर केले?",
-    "महाराष्ट्रातील राजकीय घडामोडी काय आहेत?"
+    "आजच्या ताज्या बातम्या",
+    "महाराष्ट्र राजकारण",
+    "क्रीडा बातम्या",
+    "देश-विदेश घडामोडी"
   ];
 
   /* ---- mock data -------------------------------------------------------- */
@@ -284,11 +284,7 @@
 
   /* ---- load suggestions ------------------------------------------------ */
   function loadSuggestions(chips, onSelect) {
-    if (IS_MOCK) { renderChips(chips, FALLBACK_SUGGESTIONS, onSelect); return; }
-    fetch(API_BASE.replace(/\/$/, "") + "/suggestions?lang=" + lang)
-      .then(function (r) { return r.json(); })
-      .then(function (data) { renderChips(chips, data.suggestions || FALLBACK_SUGGESTIONS, onSelect); })
-      .catch(function () { renderChips(chips, FALLBACK_SUGGESTIONS, onSelect); });
+    renderChips(chips, FALLBACK_SUGGESTIONS, onSelect);
   }
 
   function renderChips(chips, suggestions, onSelect) {
