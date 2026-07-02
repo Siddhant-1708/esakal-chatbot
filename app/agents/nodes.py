@@ -1,95 +1,199 @@
 import asyncio
+import calendar
+import re
+from datetime import date, timedelta
 from schemas import (
     QueryAnalysis, ContextAssessment, SynthesizedAnswer,
     RetrievedChunk, NewsSource, TraceStep, ChatResponse,
 )
 from app import quintype, smartflow
 from app.retrieval import extract_text, truncate_to_tokens, format_date
-from app.claude_client import call_structured, call_answer
+from app.claude_client import call_answer
 from app.config import QUINTYPE_API_BASE
 from app.agents.state import GraphState
 
-PLAN_PROMPT = """You are a query planner for Ask Esakal, a news assistant for esakal.com — a Marathi-language newspaper.
-All articles on Esakal are written in Marathi. Search queries must match Marathi text.
+# ---------------------------------------------------------------------------
+# Rule-based query planning (no LLM call). Esakal's search is a simple
+# keyword match, so intent/date/search-query extraction doesn't need a
+# model call — this replaces what used to be a dedicated LLM planning step.
+# ---------------------------------------------------------------------------
 
-Analyse the user's question and return a JSON object with:
-- intent: one of "answer" | "briefing" | "timeline" | "clarify" | "out_of_scope"
-- search_query: the best search string to find relevant Esakal articles (see rules below)
-- entities: list of key named entities (people, places, organisations, schemes)
-- k: how many articles to retrieve (3 to 15, default 8)
-- uses_history: true if the question references the conversation history
-- clarification_needed: true if the question is too ambiguous to answer
-- clarification_question: the clarifying question to ask (if needed)
-- from_date: YYYY-MM-DD derived from any time reference the user gives (see DATE RULES below)
-- to_date: YYYY-MM-DD derived from any time reference the user gives (see DATE RULES below)
+OOS_KEYWORDS = [
+    "recipe", "biryani", "बिर्याणी", "रेसिपी", "कसे बनवावे", "कसा बनवावा", "स्वयंपाक कसा",
+    "write code", "python code", "program in", "function in python", "कोड लिही", "प्रोग्राम लिही",
+    "2+2", "3+3", "what is 2", "गणिताचे कोडे", "गणित सोडव",
+    "कुंडली", "राशीफळ", "horoscope", "zodiac", "जन्मपत्रिका",
+    "girlfriend", "boyfriend", "relationship advice", "breakup", "प्रियकर", "प्रेयसी",
+    "माझी गर्लफ्रेंड", "माझा बॉयफ्रेंड",
+]
 
-DATE RULES — today is {today}. Convert all relative/named time references to absolute YYYY-MM-DD:
-  Specific month name:
-    "एप्रिल" / "April"           → from_date: 2026-04-01, to_date: 2026-04-30
-    "मे" / "May"                  → from_date: 2026-05-01, to_date: 2026-05-31
-    "जून" / "June"                → from_date: 2026-06-01, to_date: 2026-06-30
-    (apply same logic for any month name — use current year unless user says otherwise)
-  Relative ranges:
-    "आज" / "today"                → from_date: today, to_date: today
-    "काल" / "yesterday"           → from_date: yesterday, to_date: yesterday
-    "या आठवड्यात" / "this week"   → from_date: Monday of current week, to_date: today
-    "गेल्या आठवड्यात" / "last week" → from_date: Monday of last week, to_date: Sunday of last week
-    "या महिन्यात" / "this month"  → from_date: 1st of current month, to_date: today
-    "गेल्या महिन्यात" / "last month" → from_date: 1st of last month, to_date: last day of last month
-    "गेल्या X दिवसांत" / "last X days" → from_date: today minus X days, to_date: today
-  Specific dates:
-    "१ एप्रिल" / "April 1"        → from_date: 2026-04-01, to_date: 2026-04-01
-  No time reference → leave from_date and to_date null
-- refusal_reason: explain why if intent is out_of_scope
+BARE_WORDS = {"news", "politics", "राजकारण", "बातम्या", "update", "updates"}
 
-SEARCH QUERY RULES (critical — Esakal uses simple Marathi keyword search, not natural language):
-- search_query must be SHORT keywords only — 1 to 3 words maximum. No full sentences.
-- Use only the core entity: person name, place name, or topic word. Drop words like "आज", "काय", "घडले", "बद्दल", "सांगा".
-- Always use Marathi/Devanagari spelling. Common transliterations:
-    Modi → मोदी, Pune → पुणे, Mumbai → मुंबई, Maharashtra → महाराष्ट्र,
-    Delhi → दिल्ली, BJP → भाजप, Congress → काँग्रेस, Fadnavis → फडणवीस,
-    Shinde → शिंदे, Pawar → पवार, Nashik → नाशिक, Nagpur → नागपूर
-- Examples:
-    "आज मुंबईत काय घडले?" → search_query: "मुंबई"
-    "news about modi" → search_query: "मोदी"
-    "pune traffic today" → search_query: "पुणे वाहतूक"
-    "महाराष्ट्रात काय घडले?" → search_query: "महाराष्ट्र"
-    "राजकीय बातम्या / politics" → search_query: "महाराष्ट्र फडणवीस" (use politician/party names, not abstract "राजकारण")
-    "या आठवड्यातील राजकीय बातम्या" → search_query: "फडणवीस शिंदे पवार"
+STOPWORDS = {
+    "the", "a", "an", "is", "are", "was", "were", "what", "happened", "in", "on", "of",
+    "about", "today", "recent", "latest", "news", "tell", "me", "please", "current",
+    "situation", "regarding", "and",
+    "आज", "काय", "घडले", "घडल्या", "बद्दल", "सांगा", "आहे", "मध्ये", "ची", "चा", "ला",
+    "बातम्या", "विषयी", "सध्याची", "सद्यस्थिती", "चे", "सांगणे", "मधील",
+}
 
-Intent guide:
-- "answer": factual question about a specific topic or event
-- "briefing": broad "what's happening / what happened" questions about a place, person, or topic — e.g. "पुण्यात काय घडले?", "मोदींबद्दल सांगा", "recent Pune news". Use this whenever a location or named subject is mentioned.
-- "timeline": "what happened with X over time" — ordered chronological summary
-- "clarify": ONLY when there is truly NO topic, person, or place mentioned — e.g. bare single words like "politics" or "news" with zero context
-- "out_of_scope": not a news question — ONLY for things like coding help, recipes, personal relationship advice, maths homework, etc. When in doubt, use "briefing" instead.
+MULTI_WORD_TRANSLITERATE = {
+    "share market": "शेअर बाजार",
+    "stock market": "शेअर बाजार",
+    "moon mission": "चंद्र मोहीम",
+}
 
-IMPORTANT — these topics are ALWAYS valid news, NEVER mark them out_of_scope:
-- Science and space: आर्टिमिस, चंद्र मोहीम, नासा, अंतराळ, Artemis, NASA, moon mission, satellite, rocket
-- Health and medicine: कोविड, रोग, औषध, vaccine, disease, hospital
-- Finance and economy: personal finance, share market, stock market, budget, tax, GST, inflation, mutual funds, शेअर बाजार, अर्थसंकल्प, कर, महागाई, गुंतवणूक — "personal finance" means finance news, NOT personal advice
-- Sports, weather, environment, crime — all are news topics
-- Any named event, mission, scheme, or organisation is a news topic
-- If you are unsure whether something is news, assume it IS news and use "briefing"
+SINGLE_WORD_TRANSLITERATE = {
+    "modi": "मोदी", "pune": "पुणे", "mumbai": "मुंबई", "maharashtra": "महाराष्ट्र",
+    "delhi": "दिल्ली", "bjp": "भाजप", "congress": "काँग्रेस", "fadnavis": "फडणवीस",
+    "shinde": "शिंदे", "pawar": "पवार", "nashik": "नाशिक", "nagpur": "नागपूर",
+    "crime": "गुन्हा", "politics": "राजकारण", "health": "आरोग्य", "covid": "कोविड",
+    "sports": "क्रीडा", "cricket": "क्रिकेट", "election": "निवडणूक", "budget": "अर्थसंकल्प",
+    "weather": "हवामान", "monsoon": "पाऊस", "education": "शिक्षण", "farmer": "शेतकरी",
+    "water": "पाणी", "finance": "अर्थ", "gst": "जीएसटी", "tax": "कर", "inflation": "महागाई",
+    "nasa": "नासा", "environment": "पर्यावरण",
+}
 
-Conversation history:
-{history}
+MONTHS_MR = {
+    "जानेवारी": 1, "फेब्रुवारी": 2, "मार्च": 3, "एप्रिल": 4, "मे": 5, "जून": 6,
+    "जुलै": 7, "ऑगस्ट": 8, "सप्टेंबर": 9, "ऑक्टोबर": 10, "नोव्हेंबर": 11, "डिसेंबर": 12,
+}
+MONTHS_EN = {
+    "january": 1, "jan": 1, "february": 2, "feb": 2, "march": 3, "mar": 3,
+    "april": 4, "apr": 4, "june": 6, "jun": 6, "july": 7, "jul": 7,
+    "august": 8, "aug": 8, "september": 9, "sep": 9, "october": 10, "oct": 10,
+    "november": 11, "nov": 11, "december": 12, "dec": 12,
+}
 
-Question: {question}"""
 
-CHECK_PROMPT = """You are evaluating whether retrieved news articles contain enough information
-to answer a user's question about current events from esakal.com.
+def _is_out_of_scope(lower: str) -> bool:
+    return any(kw in lower for kw in OOS_KEYWORDS)
 
-Question: {question}
 
-Retrieved articles:
-{chunks_formatted}
+def _build_search_query(question: str) -> str:
+    lower = question.strip().lower()
+    for phrase, marathi in MULTI_WORD_TRANSLITERATE.items():
+        if phrase in lower:
+            lower = lower.replace(phrase, marathi)
+    lower = _strip_date_tokens(lower)
+    tokens = re.findall(r"[\wऀ-ॿ]+", lower)
+    kept: list[str] = []
+    for tok in tokens:
+        if tok in STOPWORDS:
+            continue
+        mapped = SINGLE_WORD_TRANSLITERATE.get(tok, tok)
+        if mapped not in kept:
+            kept.append(mapped)
+    if not kept:
+        # Nothing substantive left (e.g. a pure date phrase like "एप्रिलमधील बातम्या") —
+        # fall back to the date-stripped remainder rather than reintroducing the
+        # month/date words we just removed.
+        remainder = lower.strip()
+        return remainder if remainder else question.strip()
+    return " ".join(kept[:4])
 
-Return JSON:
-- context_enough: true if AT LEAST ONE article contains relevant information (score >= 4). Be generous — if any article partially addresses the question, set true.
-- relevance_score: integer 0-10 (0 = completely irrelevant, 10 = perfectly answers the question). Score based on the BEST article, not the average.
-- reason: one sentence explaining your score
-- suggested_query: a better Marathi search query to try if ALL articles are irrelevant (or null)"""
+
+_DATE_PHRASES_MR = [
+    "गेल्या आठवड्यातील", "या आठवड्यातील", "गेल्या महिन्यातील", "या महिन्यातील",
+    "गेल्या आठवड्यात", "या आठवड्यात", "गेल्या महिन्यात", "या महिन्यात",
+    "आज", "काल",
+]
+_DATE_PHRASES_EN = ["last week", "this week", "last month", "this month", "today", "yesterday"]
+
+
+def _strip_date_tokens(text: str) -> str:
+    """Remove date-related phrases/month names so they don't pollute the search query
+    (the date range is applied separately as a post-fetch filter)."""
+    cleaned = text
+    for phrase in _DATE_PHRASES_MR + _DATE_PHRASES_EN:
+        cleaned = cleaned.replace(phrase, " ")
+    cleaned = re.sub(r"(?:गेल्या|last)\s*\d+\s*(?:दिवस|days?)", " ", cleaned)
+    for name in MONTHS_MR:
+        cleaned = cleaned.replace(name, " ")
+    for name in MONTHS_EN:
+        cleaned = re.sub(r"\b" + re.escape(name) + r"\b", " ", cleaned)
+    return cleaned
+
+
+def _extract_date_range(lower: str) -> tuple[str | None, str | None]:
+    today = date.today()
+
+    if "आज" in lower or "today" in lower:
+        return today.isoformat(), today.isoformat()
+    if "काल" in lower or "yesterday" in lower:
+        y = today - timedelta(days=1)
+        return y.isoformat(), y.isoformat()
+
+    m = re.search(r"(?:गेल्या|last)\s*(\d+)\s*(?:दिवस|days?)", lower)
+    if m:
+        n = int(m.group(1))
+        start = today - timedelta(days=n)
+        return start.isoformat(), today.isoformat()
+
+    if "गेल्या आठवड्यात" in lower or "last week" in lower:
+        monday_this = today - timedelta(days=today.weekday())
+        monday_last = monday_this - timedelta(days=7)
+        sunday_last = monday_this - timedelta(days=1)
+        return monday_last.isoformat(), sunday_last.isoformat()
+    if "या आठवड्यात" in lower or "this week" in lower:
+        monday_this = today - timedelta(days=today.weekday())
+        return monday_this.isoformat(), today.isoformat()
+
+    if "गेल्या महिन्यात" in lower or "last month" in lower:
+        first_this = today.replace(day=1)
+        last_month_end = first_this - timedelta(days=1)
+        last_month_start = last_month_end.replace(day=1)
+        return last_month_start.isoformat(), last_month_end.isoformat()
+    if "या महिन्यात" in lower or "this month" in lower:
+        first_this = today.replace(day=1)
+        return first_this.isoformat(), today.isoformat()
+
+    for name, mon in MONTHS_MR.items():
+        if name in lower:
+            last_day = calendar.monthrange(today.year, mon)[1]
+            return date(today.year, mon, 1).isoformat(), date(today.year, mon, last_day).isoformat()
+    for name, mon in MONTHS_EN.items():
+        if re.search(r"\b" + re.escape(name) + r"\b", lower):
+            last_day = calendar.monthrange(today.year, mon)[1]
+            return date(today.year, mon, 1).isoformat(), date(today.year, mon, last_day).isoformat()
+
+    return None, None
+
+
+def _rule_based_analysis(question: str) -> QueryAnalysis:
+    lower = question.strip().lower()
+
+    if _is_out_of_scope(lower):
+        return QueryAnalysis(
+            intent="out_of_scope",
+            search_query=None,
+            entities=[],
+            k=8,
+            refusal_reason="not a news question",
+        )
+
+    search_query = _build_search_query(question)
+    kept_tokens = search_query.split() if search_query else []
+
+    if lower in BARE_WORDS or not kept_tokens:
+        return QueryAnalysis(
+            intent="clarify",
+            search_query=None,
+            entities=[],
+            k=8,
+            clarification_needed=True,
+        )
+
+    from_date, to_date = _extract_date_range(lower)
+
+    return QueryAnalysis(
+        intent="briefing",
+        search_query=search_query,
+        entities=[],
+        k=8,
+        from_date=from_date,
+        to_date=to_date,
+    )
 
 SYSTEM_PROMPT_EN = """You are Ask Esakal, a news assistant for esakal.com — Sakal Media Group's digital news platform.
 
@@ -168,15 +272,7 @@ def _format_chunks(chunks: list[RetrievedChunk]) -> str:
 
 
 def plan_query(state: GraphState) -> GraphState:
-    from datetime import date
-    history_text = _format_history(state.get("history", []))
-    system = "You are a query planner."
-    user = PLAN_PROMPT.format(
-        history=history_text,
-        question=state["question"],
-        today=date.today().isoformat(),
-    )
-    analysis = call_structured(system, user, QueryAnalysis)
+    analysis = _rule_based_analysis(state["question"])
     state["analysis"] = analysis
     state["steps"] = state.get("steps", []) + [
         TraceStep(title="Planning query", detail=f"Intent: {analysis.intent}, search: {analysis.search_query}")
@@ -254,27 +350,22 @@ async def retrieve(state: GraphState) -> GraphState:
 
 def check_context(state: GraphState) -> GraphState:
     chunks = state.get("chunks", [])
-    if not chunks:
-        state["context_enough"] = False
-        state["suggested_query"] = None
-        return state
-    chunks_formatted = _format_chunks(chunks)
-    system = "You are a context evaluator."
-    user = CHECK_PROMPT.format(question=state["question"], chunks_formatted=chunks_formatted)
-    assessment = call_structured(system, user, ContextAssessment)
-    state["context_enough"] = assessment.context_enough
-    state["suggested_query"] = assessment.suggested_query
+    count = len(chunks)
+    state["context_enough"] = count >= 1
+    state["suggested_query"] = None
     state["steps"] = state.get("steps", []) + [
         TraceStep(
             title="Checking context quality",
-            detail=f"Score: {assessment.relevance_score}/10 — {assessment.reason}",
+            detail=(f"{count} article(s) retrieved" if count else "No relevant articles found"),
         )
     ]
     return state
 
 
 def rewrite_query(state: GraphState) -> GraphState:
-    suggested = state.get("suggested_query") or state["analysis"].search_query + " latest"
+    current = state.get("current_query") or state["analysis"].search_query or state["question"]
+    tokens = current.split()
+    suggested = tokens[0] if len(tokens) > 1 else state["question"]
     state["current_query"] = suggested
     state["attempts"] = state.get("attempts", 0) + 1
     state["steps"] = state.get("steps", []) + [
