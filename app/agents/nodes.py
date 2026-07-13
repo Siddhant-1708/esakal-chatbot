@@ -398,12 +398,22 @@ def answer(state: GraphState) -> GraphState:
     messages = [{"role": "user", "content": state["question"]}]
     raw_answer = call_answer(system, messages)
 
-    cited_numbers = []
-    for i in range(1, len(chunks) + 1):
-        if f"[{i}]" in raw_answer:
-            cited_numbers.append(i)
-    if not cited_numbers:
-        cited_numbers = list(range(1, min(len(chunks) + 1, 4)))
+    # If the LLM itself admits the retrieved articles aren't relevant, don't
+    # auto-cite them as sources just because it left no [n] markers.
+    unable = (
+        "does not currently have sufficient coverage" in raw_answer
+        or "पुरेसे वृत्तांकन उपलब्ध नाही" in raw_answer
+    )
+
+    if unable:
+        cited_numbers = []
+    else:
+        cited_numbers = []
+        for i in range(1, len(chunks) + 1):
+            if f"[{i}]" in raw_answer:
+                cited_numbers.append(i)
+        if not cited_numbers:
+            cited_numbers = list(range(1, min(len(chunks) + 1, 4)))
 
     raw_answer, remap = _renumber_citations(raw_answer, cited_numbers)
 
