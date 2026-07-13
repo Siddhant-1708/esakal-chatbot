@@ -55,6 +55,18 @@ SINGLE_WORD_TRANSLITERATE = {
     "nasa": "नासा", "environment": "पर्यावरण",
 }
 
+# Generic category words rarely appear literally in headlines/body text
+# (search is literal keyword matching, not semantic) — real articles use
+# specific terms instead. Expanding to a multi-word query also triggers
+# quintype.search's existing per-word fallback/merge logic for better recall.
+CATEGORY_EXPANSION = {
+    "क्रीडा": "क्रीडा क्रिकेट फुटबॉल",
+    "राजकारण": "राजकारण निवडणूक सरकार",
+    "आरोग्य": "आरोग्य रुग्णालय उपचार",
+    "शिक्षण": "शिक्षण शाळा विद्यार्थी",
+    "हवामान": "हवामान पाऊस तापमान",
+}
+
 MONTHS_MR = {
     "जानेवारी": 1, "फेब्रुवारी": 2, "मार्च": 3, "एप्रिल": 4, "मे": 5, "जून": 6,
     "जुलै": 7, "ऑगस्ट": 8, "सप्टेंबर": 9, "ऑक्टोबर": 10, "नोव्हेंबर": 11, "डिसेंबर": 12,
@@ -90,6 +102,8 @@ def _build_search_query(question: str) -> str:
         # "एप्रिलमधील बातम्या" or "आजच्या ताज्या बातम्या") — signal the caller to
         # use the generic top-stories fallback instead of a doomed keyword search.
         return ""
+    if len(kept) == 1 and kept[0] in CATEGORY_EXPANSION:
+        return CATEGORY_EXPANSION[kept[0]]
     return " ".join(kept[:4])
 
 
