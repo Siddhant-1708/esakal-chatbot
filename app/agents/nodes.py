@@ -36,6 +36,11 @@ STOPWORDS = {
     "आज", "काय", "घडले", "घडल्या", "बद्दल", "सांगा", "आहे", "मध्ये", "ची", "चा", "ला",
     "बातम्या", "विषयी", "सध्याची", "सद्यस्थिती", "चे", "सांगणे", "मधील",
     "आजच्या", "ताज्या", "ताजी", "ताजा", "ताजे", "स्टोरीज", "हेडलाईन्स",
+    # "देश-विदेश घडामोडी" (national/international developments) is a roundup
+    # phrase, not a searchable topic — literal keyword search on these words
+    # matches disparate unrelated articles. Route it to the generic
+    # top-stories fallback instead (same treatment as "आजच्या ताज्या बातम्या").
+    "देश", "विदेश", "घडामोडी",
 }
 
 MULTI_WORD_TRANSLITERATE = {
