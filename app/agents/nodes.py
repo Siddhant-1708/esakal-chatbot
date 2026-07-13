@@ -364,6 +364,12 @@ async def retrieve(state: GraphState) -> GraphState:
         text = extract_text(article)
         if len(text.strip()) < 50:
             continue
+        headline = article.get("headline", "")
+        # Skip boilerplate daily-roundup teaser pages ("Read today's updates in
+        # one click") — Quintype only exposes a ~200-char generic blurb for
+        # these, never real content, so they crowd out substantive articles.
+        if "क्लिकवर" in headline:
+            continue
         chunks.append(RetrievedChunk(
             id=str(article.get("id", "")),
             headline=article.get("headline", "Untitled"),
