@@ -364,8 +364,31 @@ async def retrieve(state: GraphState) -> GraphState:
         return True
 
     if from_ms or to_ms:
-        quintype_articles = [a for a in quintype_articles if _in_range(a)]
-        print_articles = [a for a in print_articles if _in_range(a)]
+        strict_quintype = [a for a in quintype_articles if _in_range(a)]
+        strict_print = [a for a in print_articles if _in_range(a)]
+        if strict_quintype or strict_print:
+            quintype_articles, print_articles = strict_quintype, strict_print
+        else:
+            # Nothing on the exact date(s) asked for — widen by 3 days each way
+            # before giving up entirely, so "काल X बद्दल काय झाले?" doesn't dead-end
+            # just because the closest coverage is a day or two off.
+            widened_from = (from_ms - 3 * 86_400_000) if from_ms else None
+            widened_to = (to_ms + 3 * 86_400_000) if to_ms else None
+
+            def _in_widened(article: dict) -> bool:
+                pub = article.get("published-at") or 0
+                if widened_from and pub < widened_from:
+                    return False
+                if widened_to and pub > widened_to:
+                    return False
+                return True
+
+            widened_quintype = [a for a in quintype_articles if _in_widened(a)]
+            widened_print = [a for a in print_articles if _in_widened(a)]
+            if widened_quintype or widened_print:
+                quintype_articles, print_articles = widened_quintype, widened_print
+            # else: keep the original unfiltered topic-search results as a last
+            # resort — a plausibly-relevant older article beats "no coverage".
 
     # Merge: quintype first (digital, more recent), then print; deduplicate by id
     seen_ids: set[str] = set()
