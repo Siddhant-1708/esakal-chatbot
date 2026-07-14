@@ -97,6 +97,20 @@ def _is_out_of_scope(lower: str) -> bool:
     return any(kw in lower for kw in OOS_KEYWORDS)
 
 
+_CASE_SUFFIXES = ["ातील", "ाबद्दल", "ाबाबत", "ात", "ाला", "ाचा", "ाची", "ाचे", "ाने"]
+
+
+def _stem_variant(tok: str) -> str | None:
+    """Strip a trailing Marathi case suffix (locative/dative/genitive) so an
+    inflected form like "बाजारात" (in the market) also matches headlines that
+    use the bare form "बाजार" — search is literal substring matching, not
+    morphology-aware, so these otherwise never cross-match."""
+    for suf in _CASE_SUFFIXES:
+        if tok.endswith(suf) and len(tok) - len(suf) >= 3:
+            return tok[: -len(suf)]
+    return None
+
+
 def _build_search_query(question: str) -> str:
     lower = question.strip().lower()
     for phrase, marathi in MULTI_WORD_TRANSLITERATE.items():
@@ -111,6 +125,9 @@ def _build_search_query(question: str) -> str:
         mapped = SINGLE_WORD_TRANSLITERATE.get(tok, tok)
         if mapped not in kept:
             kept.append(mapped)
+        stem = _stem_variant(mapped)
+        if stem and stem not in kept:
+            kept.append(stem)
     if not kept:
         # Nothing substantive left after stripping dates/months/stopwords (e.g.
         # "एप्रिलमधील बातम्या" or "आजच्या ताज्या बातम्या") — signal the caller to
@@ -364,11 +381,10 @@ async def retrieve(state: GraphState) -> GraphState:
         return True
 
     if from_ms or to_ms:
-        strict_quintype = [a for a in quintype_articles if _in_range(a)]
-        strict_print = [a for a in print_articles if _in_range(a)]
-        if strict_quintype or strict_print:
-            quintype_articles, print_articles = strict_quintype, strict_print
-        else:
+        all_quintype, all_print = quintype_articles, print_articles
+        combined = [a for a in all_quintype if _in_range(a)] + [a for a in all_print if _in_range(a)]
+
+        if not combined:
             # Nothing on the exact date(s) asked for — widen by 3 days each way
             # before giving up entirely, so "काल X बद्दल काय झाले?" doesn't dead-end
             # just because the closest coverage is a day or two off.
@@ -383,12 +399,23 @@ async def retrieve(state: GraphState) -> GraphState:
                     return False
                 return True
 
-            widened_quintype = [a for a in quintype_articles if _in_widened(a)]
-            widened_print = [a for a in print_articles if _in_widened(a)]
-            if widened_quintype or widened_print:
-                quintype_articles, print_articles = widened_quintype, widened_print
-            # else: keep the original unfiltered topic-search results as a last
-            # resort — a plausibly-relevant older article beats "no coverage".
+            combined = [a for a in (all_quintype + all_print) if _in_widened(a)]
+            # else (still empty): fall through and pad below with unfiltered
+            # topic-search results as a last resort.
+
+        if len(combined) < 3:
+            # A date window can trap just one weak/tangential match (e.g. a crime
+            # story that only mentions "शेअर बाजार" in passing) while the actually
+            # relevant coverage sits a day or two outside it. Pad with the topic
+            # search's other results regardless of date rather than letting one
+            # thin match crowd out better answers.
+            seen_ids = {str(a.get("id", "")) for a in combined}
+            for a in all_quintype + all_print:
+                if str(a.get("id", "")) not in seen_ids:
+                    combined.append(a)
+                    seen_ids.add(str(a.get("id", "")))
+
+        quintype_articles, print_articles = combined, []
 
     # Merge: quintype first (digital, more recent), then print; deduplicate by id
     seen_ids: set[str] = set()
