@@ -274,7 +274,7 @@ Rules:
 1. Use the provided articles. If even one article is relevant, write a summary answer from it.
 2. Keep answers concise — 3-5 sentences for simple questions, up to 8 for briefings.
 3. Add inline citations [1], [2], etc. after each fact.
-4. Only say "एसकाळकडे या विषयावर सध्या पुरेसे वृत्तांकन उपलब्ध नाही." if NONE of the articles relate to the question at all.
+4. Only say "ई सकाळकडे या विषयावर सध्या पुरेसे वृत्तांकन उपलब्ध नाही." if NONE of the articles relate to the question at all.
 5. WRITE ONLY IN MARATHI. Every word must be in Marathi/Devanagari.
 
 ARTICLES:
@@ -541,7 +541,7 @@ def answer(state: GraphState) -> GraphState:
 
 def limited_answer(state: GraphState) -> GraphState:
     chunks = state.get("chunks", [])
-    _UNABLE = "एसकाळकडे या विषयावर सध्या पुरेसे वृत्तांकन उपलब्ध नाही." if state.get("lang", "mr") == "mr" else "Esakal does not currently have sufficient coverage on this topic."
+    _UNABLE = "ई सकाळकडे या विषयावर सध्या पुरेसे वृत्तांकन उपलब्ध नाही." if state.get("lang", "mr") == "mr" else "Esakal does not currently have sufficient coverage on this topic."
     if chunks:
         articles_text = _format_chunks(chunks)
         prompt_tmpl = SYSTEM_PROMPT_MR if state.get("lang", "mr") == "mr" else SYSTEM_PROMPT_EN
