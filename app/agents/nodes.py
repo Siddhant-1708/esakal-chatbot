@@ -72,6 +72,15 @@ CATEGORY_EXPANSION = {
     "हवामान": "हवामान पाऊस तापमान",
 }
 
+# Some topics are covered under an English name even in Marathi headlines
+# (e.g. "FIFA World Cup 2026" rather than "फिफा विश्वचषक"). Matched by
+# substring so inflected forms like "विश्वचषकात" still trigger the append.
+WORD_SYNONYMS = {
+    "फिफा": "World Cup",
+    "विश्वचषक": "World Cup",
+    "ऑलिंपिक": "Olympics",
+}
+
 MONTHS_MR = {
     "जानेवारी": 1, "फेब्रुवारी": 2, "मार्च": 3, "एप्रिल": 4, "मे": 5, "जून": 6,
     "जुलै": 7, "ऑगस्ट": 8, "सप्टेंबर": 9, "ऑक्टोबर": 10, "नोव्हेंबर": 11, "डिसेंबर": 12,
@@ -109,6 +118,9 @@ def _build_search_query(question: str) -> str:
         return ""
     if len(kept) == 1 and kept[0] in CATEGORY_EXPANSION:
         return CATEGORY_EXPANSION[kept[0]]
+    for word, synonym in WORD_SYNONYMS.items():
+        if any(word in tok for tok in kept) and synonym not in kept:
+            kept.append(synonym)
     return " ".join(kept[:4])
 
 
