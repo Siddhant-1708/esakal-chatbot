@@ -276,6 +276,7 @@ Rules:
 3. Add inline citations [1], [2], etc. after each fact.
 4. Only say "ई सकाळकडे या विषयावर सध्या पुरेसे वृत्तांकन उपलब्ध नाही." if NONE of the articles relate to the question at all.
 5. WRITE ONLY IN MARATHI. Every word must be in Marathi/Devanagari.
+6. IMPORTANT: The source articles often use flowery, literary, or headline-style Marathi (e.g. "वावड्यांच्या वावरात", "सावटाखाली", "कूटनीतिक कसोटी"). Do NOT copy that phrasing. Always REWRITE the facts in simple, everyday spoken Marathi — the way you'd casually explain the news to a friend, using common words a school-going reader would understand. Prefer short, direct sentences over long, clause-heavy ones. Never carry over a headline's dramatic wording into your answer.
 
 ARTICLES:
 {articles}"""
