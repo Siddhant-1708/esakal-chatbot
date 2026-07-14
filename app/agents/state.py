@@ -13,6 +13,7 @@ class GraphState(TypedDict):
     sources: list[NewsSource]
     attempts: int
     context_enough: bool
+    generic_query: bool
     suggested_query: Optional[str]
     steps: list[TraceStep]
     response: Optional[ChatResponse]
