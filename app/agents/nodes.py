@@ -321,6 +321,7 @@ def _ms_from_date_str(date_str: str | None) -> int | None:
 async def retrieve(state: GraphState) -> GraphState:
     analysis = state["analysis"]
     generic = state.get("current_query") is None and analysis.search_query == ""
+    state["generic_query"] = generic
     query = state.get("current_query") or analysis.search_query or state["question"]
     if generic:
         quintype_articles, print_articles = await asyncio.gather(
@@ -420,7 +421,20 @@ def answer(state: GraphState) -> GraphState:
     articles_text = _format_chunks(chunks)
     prompt_tmpl = SYSTEM_PROMPT_MR if state.get("lang", "mr") == "mr" else SYSTEM_PROMPT_EN
     system = prompt_tmpl.format(articles=articles_text)
-    messages = [{"role": "user", "content": state["question"]}]
+    if state.get("generic_query"):
+        # A roundup phrase like "देश-विदेश घडामोडी" has no specific topic to
+        # match — asking the LLM to judge relevance against that literal
+        # phrasing makes it (correctly, but unhelpfully) refuse when the top
+        # stories are just disparate news items. Ask it to summarize the
+        # supplied top stories directly instead.
+        user_content = (
+            "आजच्या ठळक बातम्यांचा थोडक्यात सारांश द्या."
+            if state.get("lang", "mr") == "mr"
+            else "Summarize today's top news headlines briefly."
+        )
+    else:
+        user_content = state["question"]
+    messages = [{"role": "user", "content": user_content}]
     raw_answer = call_answer(system, messages)
 
     # If the LLM itself admits the retrieved articles aren't relevant, don't
