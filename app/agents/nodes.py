@@ -84,8 +84,47 @@ CATEGORY_TO_SECTION: dict[str, str] = {
     "महाराष्ट्र": "maharashtra",
     "आरोग्य": "health",
     "गुन्हे": "crime",
+    "crime": "crime",
     "शिक्षण": "education",
     "व्यवसाय": "business",
+    "अर्थ": "business",
+    "देश": "national",
+    "विज्ञान": "science-technology",
+    "तंत्रज्ञान": "science-technology",
+    "पर्यावरण": "environment",
+    "शेती": "agriculture",
+    "शेतकरी": "agriculture",
+}
+
+# Maps topic keywords that may appear anywhere in a query to their section slug.
+# Used to run a parallel section fetch alongside keyword search.
+KEYWORD_TO_SECTION: dict[str, str] = {
+    # Sports
+    "क्रिकेट": "krida", "cricket": "krida", "ipl": "krida",
+    "फुटबॉल": "krida", "football": "krida",
+    "राष्ट्रकुल": "krida", "commonwealth": "krida",
+    "ऑलिंपिक": "krida", "olympics": "krida",
+    "टेनिस": "krida", "बॅडमिंटन": "krida",
+    "क्रीडा": "krida",
+    # Politics / Government
+    "राजकारण": "politics", "निवडणूक": "politics", "election": "politics",
+    "मोदी": "politics", "भाजप": "politics", "काँग्रेस": "politics",
+    "सरकार": "politics", "मंत्री": "politics", "विधानसभा": "politics",
+    "फडणवीस": "politics", "शिंदे": "politics", "पवार": "politics",
+    # Maharashtra / Cities
+    "महाराष्ट्र": "maharashtra", "पुणे": "maharashtra",
+    "मुंबई": "maharashtra", "नागपूर": "maharashtra", "नाशिक": "maharashtra",
+    # Crime
+    "गुन्हा": "crime", "गुन्हेगार": "crime", "पोलीस": "crime",
+    "अटक": "crime", "खून": "crime",
+    # Business / Economy
+    "शेअर": "business", "बाजार": "business", "अर्थसंकल्प": "business",
+    "budget": "business", "gst": "business", "महागाई": "business",
+    "sensex": "business", "nifty": "business",
+    # Health
+    "रुग्णालय": "health", "आरोग्य": "health", "hospital": "health",
+    # Agriculture
+    "शेतकरी": "agriculture", "शेती": "agriculture", "पाऊस": "agriculture",
 }
 
 # Some topics are covered under an English name even in Marathi headlines
@@ -440,37 +479,51 @@ async def retrieve(state: GraphState) -> GraphState:
         query_token = query.split()[0] if query else ""
         section_slug = CATEGORY_TO_SECTION.get(query_token)
 
+        # Detect relevant section from query keywords (for parallel fetch)
+        if not section_slug:
+            query_lower = query.lower()
+            for kw, sec in KEYWORD_TO_SECTION.items():
+                if kw in query_lower:
+                    section_slug = sec
+                    break
+
         if section_slug:
-            quintype_articles, print_articles = await asyncio.gather(
-                quintype.section_stories(section_slug, limit=analysis.k),
+            # Run keyword search + section fetch in parallel, then merge
+            (keyword_results, section_results), print_articles = await asyncio.gather(
+                asyncio.gather(
+                    quintype.search(query, limit=analysis.k),
+                    quintype.section_stories(section_slug, limit=analysis.k),
+                ),
                 asyncio.to_thread(smartflow.search, query, limit=max(3, analysis.k // 3)),
             )
-            # Supplement with keyword search in case section API misses specific queries
-            if len(quintype_articles) < 3:
-                extra = await quintype.search(query, limit=analysis.k)
-                seen = {str(a.get("id", "")) for a in quintype_articles}
-                for a in extra:
-                    aid = str(a.get("id", ""))
-                    if aid not in seen:
-                        quintype_articles.append(a)
-                        seen.add(aid)
+            seen: set[str] = set()
+            quintype_articles = []
+            for a in keyword_results + section_results:
+                aid = str(a.get("id", ""))
+                if aid and aid in seen:
+                    continue
+                if aid:
+                    seen.add(aid)
+                quintype_articles.append(a)
+            # Sort merged results newest-first
+            quintype_articles.sort(key=lambda a: a.get("published-at") or 0, reverse=True)
         else:
             quintype_articles, print_articles = await asyncio.gather(
                 quintype.search(query, limit=analysis.k),
                 asyncio.to_thread(smartflow.search, query, limit=max(3, analysis.k // 3)),
             )
-            # Bilingual fallback: if Marathi search returned few results, also search
-            # with English equivalents (many Marathi headlines use English sports/brand names).
-            if len(quintype_articles) < 3:
-                en_query = _build_en_fallback_query(query)
-                if en_query:
-                    extra = await quintype.search(en_query, limit=analysis.k)
-                    seen = {str(a.get("id", "")) for a in quintype_articles}
-                    for a in extra:
-                        aid = str(a.get("id", ""))
-                        if aid not in seen:
-                            quintype_articles.append(a)
-                            seen.add(aid)
+
+        # Bilingual fallback: if still few results, retry with English equivalents
+        if len(quintype_articles) < 3:
+            en_query = _build_en_fallback_query(query)
+            if en_query:
+                extra = await quintype.search(en_query, limit=analysis.k)
+                seen2 = {str(a.get("id", "")) for a in quintype_articles}
+                for a in extra:
+                    aid = str(a.get("id", ""))
+                    if aid not in seen2:
+                        quintype_articles.append(a)
+                        seen2.add(aid)
     # Apply date-range filter if the planner extracted explicit dates from the query.
     # Skip for generic "top stories" queries — there's no specific topic to widen the
     # search on if the strict date filter empties the result, so best-effort recency
