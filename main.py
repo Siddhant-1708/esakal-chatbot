@@ -178,10 +178,18 @@ setInterval(load,30000);
 async def _validation_error_handler(request: Request, exc: RequestValidationError):
     print(f"[422] {request.method} {request.url.path} — {exc.errors()}")
     return JSONResponse(status_code=422, content={"detail": exc.errors()})
+
+
+async def _general_error_handler(request: Request, exc: Exception):
+    import traceback
+    tb = traceback.format_exc()
+    print(f"[500] {request.method} {request.url.path}\n{tb}")
+    return JSONResponse(status_code=500, content={"error": str(exc), "traceback": tb})
 app = FastAPI(title="Ask Esakal")
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_exception_handler(RequestValidationError, _validation_error_handler)
+app.add_exception_handler(Exception, _general_error_handler)
 
 BASE_DIR = Path(__file__).parent
 app.mount("/widget", StaticFiles(directory=BASE_DIR / "widget"), name="widget")
