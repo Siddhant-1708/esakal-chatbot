@@ -77,6 +77,17 @@ CATEGORY_EXPANSION = {
     "हवामान": "हवामान पाऊस तापमान monsoon",
 }
 
+# Maps Marathi category words to Quintype section slugs for direct section fetch.
+CATEGORY_TO_SECTION: dict[str, str] = {
+    "क्रीडा": "krida",
+    "राजकारण": "politics",
+    "महाराष्ट्र": "maharashtra",
+    "आरोग्य": "health",
+    "गुन्हे": "crime",
+    "शिक्षण": "education",
+    "व्यवसाय": "business",
+}
+
 # Some topics are covered under an English name even in Marathi headlines
 # (e.g. "FIFA World Cup 2026" rather than "फिफा विश्वचषक"). Matched by
 # substring so inflected forms like "विश्वचषकात" still trigger the append.
@@ -425,22 +436,41 @@ async def retrieve(state: GraphState) -> GraphState:
         if filtered:
             quintype_articles = filtered
     else:
-        quintype_articles, print_articles = await asyncio.gather(
-            quintype.search(query, limit=analysis.k),
-            asyncio.to_thread(smartflow.search, query, limit=max(3, analysis.k // 3)),
-        )
-        # Bilingual fallback: if Marathi search returned few results, also search
-        # with English equivalents (many Marathi headlines use English sports/brand names).
-        if len(quintype_articles) < 3:
-            en_query = _build_en_fallback_query(query)
-            if en_query:
-                extra = await quintype.search(en_query, limit=analysis.k)
+        # Check if the query maps to a known site section for a direct section fetch.
+        query_token = query.split()[0] if query else ""
+        section_slug = CATEGORY_TO_SECTION.get(query_token)
+
+        if section_slug:
+            quintype_articles, print_articles = await asyncio.gather(
+                quintype.section_stories(section_slug, limit=analysis.k),
+                asyncio.to_thread(smartflow.search, query, limit=max(3, analysis.k // 3)),
+            )
+            # Supplement with keyword search in case section API misses specific queries
+            if len(quintype_articles) < 3:
+                extra = await quintype.search(query, limit=analysis.k)
                 seen = {str(a.get("id", "")) for a in quintype_articles}
                 for a in extra:
                     aid = str(a.get("id", ""))
                     if aid not in seen:
                         quintype_articles.append(a)
                         seen.add(aid)
+        else:
+            quintype_articles, print_articles = await asyncio.gather(
+                quintype.search(query, limit=analysis.k),
+                asyncio.to_thread(smartflow.search, query, limit=max(3, analysis.k // 3)),
+            )
+            # Bilingual fallback: if Marathi search returned few results, also search
+            # with English equivalents (many Marathi headlines use English sports/brand names).
+            if len(quintype_articles) < 3:
+                en_query = _build_en_fallback_query(query)
+                if en_query:
+                    extra = await quintype.search(en_query, limit=analysis.k)
+                    seen = {str(a.get("id", "")) for a in quintype_articles}
+                    for a in extra:
+                        aid = str(a.get("id", ""))
+                        if aid not in seen:
+                            quintype_articles.append(a)
+                            seen.add(aid)
     # Apply date-range filter if the planner extracted explicit dates from the query.
     # Skip for generic "top stories" queries — there's no specific topic to widen the
     # search on if the strict date filter empties the result, so best-effort recency

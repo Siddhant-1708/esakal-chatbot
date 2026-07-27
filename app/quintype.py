@@ -80,3 +80,18 @@ async def top_stories(limit: int = 5) -> list[dict]:
         resp.raise_for_status()
         data = resp.json()
     return [s for s in data.get("stories", []) if _is_free(s)]
+
+
+async def section_stories(section_slug: str, limit: int = 8) -> list[dict]:
+    """Fetch recent stories from a named site section (e.g. 'krida', 'maharashtra')."""
+    url = f"{QUINTYPE_API_BASE}/api/v1/stories"
+    params = {"section-slug": section_slug, "limit": limit * 2}
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url, params=params)
+            resp.raise_for_status()
+            data = resp.json()
+        stories = [s for s in data.get("stories", []) if _is_free(s)]
+        return sorted(stories, key=lambda s: s.get("published-at") or 0, reverse=True)[:limit]
+    except Exception:
+        return []
