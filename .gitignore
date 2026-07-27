@@ -4,7 +4,6 @@ __pycache__/
 *.pyo
 .pytest_cache/
 usage_data.json
-smartflow_index.json
 *.egg-info/
 .venv/
 venv/
