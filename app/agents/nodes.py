@@ -115,7 +115,7 @@ KEYWORD_TO_SECTION: dict[str, str] = {
     "महाराष्ट्र": "maharashtra", "पुणे": "maharashtra",
     "मुंबई": "maharashtra", "नागपूर": "maharashtra", "नाशिक": "maharashtra",
     # Crime
-    "गुन्हा": "crime", "गुन्हेगार": "crime", "पोलीस": "crime",
+    "गुन्हा": "crime", "गुन्हेगार": "crime", "गुन्हेगारी": "crime", "पोलीस": "crime",
     "अटक": "crime", "खून": "crime",
     # Business / Economy
     "शेअर": "business", "बाजार": "business", "अर्थसंकल्प": "business",
