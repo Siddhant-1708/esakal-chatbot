@@ -212,6 +212,7 @@ def _build_initial_state(body: ChatRequest) -> GraphState:
         sources=[],
         attempts=0,
         context_enough=False,
+        generic_query=False,
         suggested_query=None,
         steps=[],
         response=None,
