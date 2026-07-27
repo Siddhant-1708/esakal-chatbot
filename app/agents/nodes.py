@@ -36,6 +36,11 @@ STOPWORDS = {
     "आज", "काय", "घडले", "घडल्या", "बद्दल", "सांगा", "आहे", "मध्ये", "ची", "चा", "ला",
     "बातम्या", "विषयी", "सध्याची", "सद्यस्थिती", "चे", "सांगणे", "मधील",
     "आजच्या", "ताज्या", "ताजी", "ताजा", "ताजे", "स्टोरीज", "हेडलाईन्स",
+    # filler adjectives/verbs that add no search value
+    "महत्त्वाच्या", "महत्वाच्या", "महत्त्वाचे", "महत्वाचे", "महत्त्वाची", "महत्वाची",
+    "महत्त्वाचा", "महत्वाचा", "ठळक", "मुख्य", "प्रमुख", "सर्वात", "खूप", "काही",
+    "आहेत", "होते", "होती", "होता", "होत्या", "झाले", "झाली", "झाला", "झाल्या",
+    "सांगतो", "सांगते", "द्या", "करा", "घ्या", "जाणून", "घेऊया", "पाहूया",
     # "देश-विदेश घडामोडी" (national/international developments) is a roundup
     # phrase, not a searchable topic — literal keyword search on these words
     # matches disparate unrelated articles. Route it to the generic
@@ -65,20 +70,52 @@ SINGLE_WORD_TRANSLITERATE = {
 # specific terms instead. Expanding to a multi-word query also triggers
 # quintype.search's existing per-word fallback/merge logic for better recall.
 CATEGORY_EXPANSION = {
-    "क्रीडा": "क्रीडा क्रिकेट फुटबॉल",
-    "राजकारण": "राजकारण निवडणूक सरकार",
-    "आरोग्य": "आरोग्य रुग्णालय उपचार",
+    "क्रीडा": "क्रीडा क्रिकेट cricket football IPL",
+    "राजकारण": "राजकारण निवडणूक सरकार election",
+    "आरोग्य": "आरोग्य रुग्णालय उपचार hospital",
     "शिक्षण": "शिक्षण शाळा विद्यार्थी",
-    "हवामान": "हवामान पाऊस तापमान",
+    "हवामान": "हवामान पाऊस तापमान monsoon",
 }
 
 # Some topics are covered under an English name even in Marathi headlines
 # (e.g. "FIFA World Cup 2026" rather than "फिफा विश्वचषक"). Matched by
 # substring so inflected forms like "विश्वचषकात" still trigger the append.
+# Marathi terms whose English equivalent often appears in Marathi headlines.
+# Matched by substring so inflected forms ("विश्वचषकात") still trigger.
 WORD_SYNONYMS = {
-    "फिफा": "World Cup",
+    "फिफा": "FIFA World Cup",
     "विश्वचषक": "World Cup",
     "ऑलिंपिक": "Olympics",
+    "क्रिकेट": "cricket IPL",
+    "फुटबॉल": "football",
+    "टेनिस": "tennis",
+    "बॅडमिंटन": "badminton",
+    "कुस्ती": "wrestling",
+    "बॉक्सिंग": "boxing",
+    "नासा": "NASA",
+    "इस्रो": "ISRO",
+    "बजेट": "budget",
+    "जीएसटी": "GST",
+    "सेन्सेक्स": "Sensex",
+    "शेअर": "stock market Sensex Nifty",
+}
+
+# English terms whose Marathi equivalent appears in Marathi headlines.
+# Used to build a parallel English search query when the user types in Marathi.
+_EN_FALLBACK: dict[str, str] = {
+    "cricket": "क्रिकेट IPL",
+    "football": "फुटबॉल",
+    "election": "निवडणूक",
+    "budget": "अर्थसंकल्प बजेट",
+    "modi": "मोदी",
+    "bjp": "भाजप",
+    "congress": "काँग्रेस",
+    "pune": "पुणे",
+    "mumbai": "मुंबई",
+    "maharashtra": "महाराष्ट्र",
+    "rain": "पाऊस",
+    "flood": "पूर",
+    "farmer": "शेतकरी",
 }
 
 MONTHS_MR = {
@@ -93,8 +130,29 @@ MONTHS_EN = {
 }
 
 
+_ENTERTAINMENT_KEYWORDS = {
+    "अभिनेत्री", "अभिनेता", "बॉलिवूड", "घटस्फोट", "actress", "actor",
+    "bollywood", "divorce", "celebrity", "सेलिब्रिटी", "लव्ह स्टोरी",
+    "फिल्म स्टार", "tv star", "reality show",
+}
+
+
 def _is_out_of_scope(lower: str) -> bool:
     return any(kw in lower for kw in OOS_KEYWORDS)
+
+
+def _build_en_fallback_query(marathi_query: str) -> str:
+    """Return an English-keyword search string for a Marathi query, or '' if none apply."""
+    lower = marathi_query.lower()
+    parts: list[str] = []
+    for mr_word, en_terms in _EN_FALLBACK.items():
+        if mr_word in lower:
+            parts.append(en_terms)
+    # Also add any English words already present in the query (e.g. "IPL")
+    for tok in re.findall(r"[a-zA-Z]+", marathi_query):
+        if len(tok) > 2 and tok.lower() not in parts:
+            parts.append(tok)
+    return " ".join(parts[:4])
 
 
 _CASE_SUFFIXES = ["ातील", "ाबद्दल", "ाबाबत", "ात", "ाला", "ाचा", "ाची", "ाचे", "ाने"]
@@ -358,11 +416,31 @@ async def retrieve(state: GraphState) -> GraphState:
             quintype.top_stories(limit=analysis.k),
             asyncio.to_thread(smartflow.recent, limit=max(3, analysis.k // 3)),
         )
+        # Filter celebrity/entertainment from generic top-stories — they dominate
+        # the feed but aren't what users mean by "today's news".
+        def _is_entertainment(a: dict) -> bool:
+            text = (a.get("headline", "") + " " + a.get("subheadline", "")).lower()
+            return any(kw in text for kw in _ENTERTAINMENT_KEYWORDS)
+        filtered = [a for a in quintype_articles if not _is_entertainment(a)]
+        if filtered:
+            quintype_articles = filtered
     else:
         quintype_articles, print_articles = await asyncio.gather(
             quintype.search(query, limit=analysis.k),
             asyncio.to_thread(smartflow.search, query, limit=max(3, analysis.k // 3)),
         )
+        # Bilingual fallback: if Marathi search returned few results, also search
+        # with English equivalents (many Marathi headlines use English sports/brand names).
+        if len(quintype_articles) < 3:
+            en_query = _build_en_fallback_query(query)
+            if en_query:
+                extra = await quintype.search(en_query, limit=analysis.k)
+                seen = {str(a.get("id", "")) for a in quintype_articles}
+                for a in extra:
+                    aid = str(a.get("id", ""))
+                    if aid not in seen:
+                        quintype_articles.append(a)
+                        seen.add(aid)
     # Apply date-range filter if the planner extracted explicit dates from the query.
     # Skip for generic "top stories" queries — there's no specific topic to widen the
     # search on if the strict date filter empties the result, so best-effort recency
