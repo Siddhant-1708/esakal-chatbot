@@ -14,6 +14,7 @@ class GraphState(TypedDict):
     attempts: int
     context_enough: bool
     generic_query: bool
+    section_matched: bool
     suggested_query: Optional[str]
     steps: list[TraceStep]
     response: Optional[ChatResponse]

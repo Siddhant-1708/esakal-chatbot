@@ -215,6 +215,7 @@ def _build_initial_state(body: ChatRequest) -> GraphState:
         attempts=0,
         context_enough=False,
         generic_query=False,
+        section_matched=False,
         suggested_query=None,
         steps=[],
         response=None,

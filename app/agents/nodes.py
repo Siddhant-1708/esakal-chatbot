@@ -376,7 +376,7 @@ Rules:
 1. Answer only from the provided articles. Never use outside knowledge.
 2. Keep answers concise — 3 to 5 sentences for simple questions, up to 8 for briefings/timelines.
 3. Include inline citations [1], [2], etc. corresponding to the source numbers.
-4. Only say "Esakal does not currently have sufficient coverage on this topic." if NO article is relevant at all — never use this when relevant articles are present.
+4. {relevance_rule}
 5. Always respond in English, even if the articles are in Marathi.
 
 ARTICLES:
@@ -392,12 +392,40 @@ Rules:
 1. Use the provided articles. If even one article is relevant, write a summary answer from it.
 2. Keep answers concise — 3-5 sentences for simple questions, up to 8 for briefings.
 3. Add inline citations [1], [2], etc. after each fact.
-4. Only say "ई सकाळकडे या विषयावर सध्या पुरेसे वृत्तांकन उपलब्ध नाही." if NONE of the articles relate to the question at all.
+4. {relevance_rule}
 5. WRITE ONLY IN MARATHI. Every word must be in Marathi/Devanagari.
 6. IMPORTANT: The source articles often use flowery, literary, or headline-style Marathi (e.g. "वावड्यांच्या वावरात", "सावटाखाली", "कूटनीतिक कसोटी"). Do NOT copy that phrasing. Always REWRITE the facts in simple, everyday spoken Marathi — the way you'd casually explain the news to a friend, using common words a school-going reader would understand. Prefer short, direct sentences over long, clause-heavy ones. Never carry over a headline's dramatic wording into your answer.
 
 ARTICLES:
 {articles}"""
+
+_RELEVANCE_RULE_STRICT_EN = (
+    'Only say "Esakal does not currently have sufficient coverage on this topic." '
+    "if NO article is relevant at all — never use this when relevant articles are present."
+)
+_RELEVANCE_RULE_SECTION_EN = (
+    "These articles were pulled from esakal.com's own section dedicated to this topic, "
+    "so treat any article covering the same general subject as relevant, even if it "
+    "doesn't mention every specific detail in the question. Only say \"Esakal does not "
+    "currently have sufficient coverage on this topic.\" if truly none of the articles "
+    "touch this subject area at all."
+)
+_RELEVANCE_RULE_STRICT_MR = (
+    'फक्त "ई सकाळकडे या विषयावर सध्या पुरेसे वृत्तांकन उपलब्ध नाही." असे तेव्हाच म्हणा '
+    "जेव्हा एकही लेख प्रश्नाशी संबंधित नसेल."
+)
+_RELEVANCE_RULE_SECTION_MR = (
+    "हे लेख esakal.com च्या याच विषयाला वाहिलेल्या विभागातून थेट घेतलेले आहेत, त्यामुळे "
+    "प्रश्नातील प्रत्येक बारकावा नमूद नसला तरी त्याच सर्वसाधारण विषयाशी संबंधित कोणताही लेख "
+    'संबंधित समजा. फक्त "ई सकाळकडे या विषयावर सध्या पुरेसे वृत्तांकन उपलब्ध नाही." असे तेव्हाच '
+    "म्हणा जेव्हा खरोखर कोणताही लेख या विषयाला स्पर्शही करत नसेल."
+)
+
+
+def _relevance_rule(lang: str, section_matched: bool) -> str:
+    if lang == "mr":
+        return _RELEVANCE_RULE_SECTION_MR if section_matched else _RELEVANCE_RULE_STRICT_MR
+    return _RELEVANCE_RULE_SECTION_EN if section_matched else _RELEVANCE_RULE_STRICT_EN
 
 
 def _article_url(article: dict) -> str:
@@ -470,6 +498,7 @@ async def retrieve(state: GraphState) -> GraphState:
     analysis = state["analysis"]
     generic = state.get("current_query") is None and analysis.search_query == ""
     state["generic_query"] = generic
+    state["section_matched"] = False
     query = state.get("current_query") or analysis.search_query or state["question"]
     if generic:
         quintype_articles, print_articles = await asyncio.gather(
@@ -498,6 +527,7 @@ async def retrieve(state: GraphState) -> GraphState:
                     break
 
         if section_slug:
+            state["section_matched"] = True
             # Run keyword search + section fetch in parallel, then merge
             (keyword_results, section_results), print_articles = await asyncio.gather(
                 asyncio.gather(
@@ -653,8 +683,12 @@ def rewrite_query(state: GraphState) -> GraphState:
 def answer(state: GraphState) -> GraphState:
     chunks = state.get("chunks", [])
     articles_text = _format_chunks(chunks)
-    prompt_tmpl = SYSTEM_PROMPT_MR if state.get("lang", "mr") == "mr" else SYSTEM_PROMPT_EN
-    system = prompt_tmpl.format(articles=articles_text)
+    lang = state.get("lang", "mr")
+    prompt_tmpl = SYSTEM_PROMPT_MR if lang == "mr" else SYSTEM_PROMPT_EN
+    system = prompt_tmpl.format(
+        articles=articles_text,
+        relevance_rule=_relevance_rule(lang, state.get("section_matched", False)),
+    )
     if state.get("generic_query"):
         # A roundup phrase like "देश-विदेश घडामोडी" has no specific topic to
         # match — asking the LLM to judge relevance against that literal
@@ -716,8 +750,12 @@ def limited_answer(state: GraphState) -> GraphState:
     _UNABLE = "ई सकाळकडे या विषयावर सध्या पुरेसे वृत्तांकन उपलब्ध नाही." if state.get("lang", "mr") == "mr" else "Esakal does not currently have sufficient coverage on this topic."
     if chunks:
         articles_text = _format_chunks(chunks)
-        prompt_tmpl = SYSTEM_PROMPT_MR if state.get("lang", "mr") == "mr" else SYSTEM_PROMPT_EN
-        system = prompt_tmpl.format(articles=articles_text)
+        lang = state.get("lang", "mr")
+        prompt_tmpl = SYSTEM_PROMPT_MR if lang == "mr" else SYSTEM_PROMPT_EN
+        system = prompt_tmpl.format(
+            articles=articles_text,
+            relevance_rule=_relevance_rule(lang, state.get("section_matched", False)),
+        )
         messages = [{"role": "user", "content": state["question"]}]
         raw_answer = call_answer(system, messages)
         # If the LLM itself admitted it can't answer, don't show irrelevant sources
