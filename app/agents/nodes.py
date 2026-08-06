@@ -85,15 +85,14 @@ CATEGORY_TO_SECTION: dict[str, str] = {
     "आरोग्य": "health",
     "गुन्हे": "crime",
     "crime": "crime",
-    "शिक्षण": "education",
-    "व्यवसाय": "business",
-    "अर्थ": "business",
-    "देश": "national",
-    "विज्ञान": "science-technology",
-    "तंत्रज्ञान": "science-technology",
-    "पर्यावरण": "environment",
-    "शेती": "agriculture",
-    "शेतकरी": "agriculture",
+    "शिक्षण": "education-jobs",
+    "व्यवसाय": "sakal-money",
+    "अर्थ": "sakal-money",
+    "देश": "desh",
+    "विज्ञान": "sci-tech",
+    "तंत्रज्ञान": "sci-tech",
+    "मनोरंजन": "manoranjan",
+    "बॉलिवूड": "manoranjan",
 }
 
 # Maps topic keywords that may appear anywhere in a query to their section slug.
@@ -118,13 +117,15 @@ KEYWORD_TO_SECTION: dict[str, str] = {
     "गुन्हा": "crime", "गुन्हेगार": "crime", "गुन्हेगारी": "crime", "पोलीस": "crime",
     "अटक": "crime", "खून": "crime",
     # Business / Economy
-    "शेअर": "business", "बाजार": "business", "अर्थसंकल्प": "business",
-    "budget": "business", "gst": "business", "महागाई": "business",
-    "sensex": "business", "nifty": "business",
+    "शेअर": "sakal-money", "बाजार": "sakal-money", "अर्थसंकल्प": "sakal-money",
+    "budget": "sakal-money", "gst": "sakal-money", "महागाई": "sakal-money",
+    "sensex": "sakal-money", "nifty": "sakal-money",
     # Health
     "रुग्णालय": "health", "आरोग्य": "health", "hospital": "health",
-    # Agriculture
-    "शेतकरी": "agriculture", "शेती": "agriculture", "पाऊस": "agriculture",
+    # Entertainment
+    "बॉलिवूड": "manoranjan", "मनोरंजन": "manoranjan", "bollywood": "manoranjan",
+    "सिनेमा": "manoranjan", "चित्रपट": "manoranjan", "अभिनेता": "manoranjan",
+    "अभिनेत्री": "manoranjan",
 }
 
 # Some topics are covered under an English name even in Marathi headlines
@@ -243,10 +244,19 @@ def _build_search_query(question: str) -> str:
         return ""
     if len(kept) == 1 and kept[0] in CATEGORY_EXPANSION:
         return CATEGORY_EXPANSION[kept[0]]
+    # A bare category word rarely appears literally in article bodies (e.g.
+    # "राजकारण" as a standalone word), even when it's one of several tokens —
+    # so expand it in place with its more literal synonyms too, not just when
+    # it's the only token.
+    for tok in list(kept):
+        if tok in CATEGORY_EXPANSION:
+            for word in CATEGORY_EXPANSION[tok].split():
+                if word not in kept:
+                    kept.append(word)
     for word, synonym in WORD_SYNONYMS.items():
         if any(word in tok for tok in kept) and synonym not in kept:
             kept.append(synonym)
-    return " ".join(kept[:4])
+    return " ".join(kept[:6])
 
 
 _DATE_PHRASES_MR = [
